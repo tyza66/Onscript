@@ -1,0 +1,548 @@
+BKE脚本变量解析引擎说明
+
+一，变量类型
+1.void(空)
+  表示空变量，当访问字典或数组里不存在的变量时，或未定义的全局变量时，会得到这个值。
+
+2.number(数值)
+  整数格式:[0|0x|0X]+数字或十六进制字母(0x开头时)，当数字以0x开头时，后面的序列会被当成十六进制的数，其余情况被当成是十进制。
+  如:0xA=10
+       0xc=12
+       010=8
+       233=233
+  浮点数格式:数字+[小数点+数字]+[e|E+[加号或减号]+数字]，同时也支持上述的整数格式(当0.开头时，会被当成十进制，0x或0X开头时，会被当成十六进制，十六进制也有指数形式，具体请百度。
+  如:2.33e2=233
+       23e-3=0.023
+       0.5=0.5
+       十六进制和八进制同上。
+       
+3.string(字符串)
+  表示一个unicode字符串。默认不支持转义字符，表示由一头一尾两个双引号或单引号（支持转义字符）括起来的字符串。且连起来的双引号会被当成字符串内的一个双引号而不是字符串结束符号。
+  要支持\n，\r，\t和\"这些转义字符，需要使用单引号将字符串括起来。
+  可以通过数字下标来引用元素(负下标表示从后往前数)。
+  如:"abc"=包含abc三个字母的字符串。
+       "abc""abc"=以一个双引号隔开的两个abc串。
+       "abc'abc"=以一个单引号隔开的两个abc串。
+       '\r\n'=windows下的回车换行符。
+       字符串的分片（参照python的分片语法）：同数组，如a="abcd"，a[1:3]="bc"。
+       
+4.array(数组)
+  由一组变量(任意类型)组成的类型，可以嵌套。需要用中括号括起来，元素间由逗号隔开。可以通过数字下标来引用元素(负下标表示从后往前数)。
+  如:以下写法都是合法的
+      [1,2,3]
+      [1,,2]	//第二个元素为void
+      ["233",2,3,3,[2,3,3]]
+  若a=[1,2,3,"233"],则a[0]=1,a[1]=2,a[-1]="233"
+  []代表一个空数组。
+  当使用等号进行数组拷贝时，并不创建新的数组，只是增加引用数，即a=[1,2];b=a;b[0]=3;此时a[0]也为3。
+  注意：当引用到一个越界的下标时，会自动将数组的界限扩充，因此a=[1,2,3],b=a[5]之后使用a[-1]也将得到a[5]的值（void）。
+  数组的分片（参照python的分片语法）：a[1:3]返回[a[1], a[2]]的数组，a[0:-1]返回除了a最后一个元素组成的数组，a[:]返回a的一个拷贝。
+  无论如何，分片都将返回新数组，a[:]==a会为false。
+      
+5.dictionary(字典)
+  由一些键-值对组成的变量，键为字符串型，值可以是任意类型的变量，可以嵌套。可以通过字符串下标来引用元素。字典由%[开头，]结尾，键-值对之间用逗号隔开，键和值之间用冒号或=>隔开。如果使用冒号隔开，则前面直接写变量名，如果使用=>隔开，则前面写一个结果为字符串的表达式。
+  如:以下写法都是合法的
+      %["age"=>23,"value"=>233]
+      %[name:"ojj", name2:"zc"]
+  引用里面的元素可以使用中括号加字符串或点号加变量名的方式，前者更普适，比如对于"1"这种非合法变量名的键值只能用前者。
+  若a=%["age"=>23, name:"ojj"]，则a["name"]为"ojj",a.age为23
+  注意如果点号后接的同时也是一个方法或属性名，则认为使用的是该方法或属性。比如a=%[type:3]，则a.type为"dictionary"。（调用了type属性而不是type键的值）。a["type"]为3。
+  %[]代表一个空字典
+  当使用等号进行字典拷贝时，并不创建新的字典，只是增加引用数，即a=[name:233];b=a;b.name=3;此时a.name也为3。
+
+6.function(函数)
+  格式如下：
+  function func(a,b)
+  {
+    return a+b;
+  }
+  或func=function(a,b){return a=b;}
+  function关键字是必不可少的,当和赋值(=)号一起使用时，函数名可以省略，否则需写上函数名，之后是由小括号组成的参数表，如果不需要参数，则小括号内什么都不填。函数体必须是由花括号围成的一组语句。
+  对于数组和字典以及下面要提到的class为引用拷贝，即函数内更改了这个数组的某元素的值，会使传入的数组的对应元素也改变。
+  函数的返回值由return来决定，如果没有return，则返回void。
+  参数到数组的转变：在参数列表中在参数名前加*表示将此位置及之后的参数当做一个数组传进这个参数中，如：
+  function func(a, *b){return;}
+  func(2,3,4)时，a会被赋值成2，b会被赋值成[3,4]。
+  参数可以具有默认值，比如
+  function f(a=1){return a;}
+  这样调用f(1)和f()都返回1。
+
+7.property(属性)
+  属性是一种特殊的变量，可以在读取和写入时定义不同的操作。
+  propset xx(v){log(“set”);}定义了属性xx的写入时执行的函数。
+  propget xx(){log(“get”);}定义了属性xx的读取时执行的函数。
+  当执行xx=2;时会打印出set，当执行a=xx;时会打印出get。
+  属性主要用在下面要说的class里。
+
+8.class(类)
+  定义class的格式如下：
+  class xxx
+  {
+    var a=2;
+    var b;
+    function func(){}
+    propset xx(s){}
+    propget xx(){}
+//下面的初始化函数是可选的，也可以带上参数。
+   function xxx(){log("init");}
+  }
+  实例化一个class的方法如下：abc=xxx();此时便有abc.a为2，abc.b为void，同时abc有了xx属性和func函数。
+
+二，变量类型的自动转换。
+ 根据运算的需要，变量的类型有时候会被自动转换（仅限void，number，string之间）。void会被转成0或者空字符串。也可以使用number(变量名)和string(变量名)进行强制转换（这样的强制转换不会影响原变量）。当数字转字符串只显示十四位（大数，小数只有四位如0.0001），超过时会使用科学表示法或舍去小数点后更多的位数。字符串转数字会到不合法的字符的时候停止。
+  如：string(100000)="100000"
+      string(1000000000000000000)="1e+018"
+      string(1.2345678)="1.23457"
+      string(0.000233)="0.000233"
+      string(0.0000233)="2.33e-005"
+      number("0x0az")=10
+      number("00.3")=0.3
+  另外在下面要提到的逻辑运算中，除了void，0，""之外都被当成真，而这三个值被当成假。
+
+  其余的转换（如number到array）都是非法的。
+
+三，变量名的组成
+  变量名由下划线或字符或中文字符开头，由下划线或字符或中文字符或数字组成，如：
+  a2
+  _aa
+  中文变量
+
+  变量名之前还可以使用$或#来强制指明作用域。$表示全局变量，#表示当前闭包下的局域变量。
+  如$("a"+"2")，$b3，#c，#("a3")
+  当然变量名不能与接下来指出的关键字一样。
+
+三、变量的作用域
+  在任何语句块（由{}包含起来的一组语句）外部定义的变量为全局变量，否则为局部变量。有些运算符会隐式的带有一个语句块。当指明一个变量名时，会最先查找当前的语句块，如果没有，则向上继续查找，如果在最上层的global的变量空间中也没找到，则在当前的作用域下为这个变量名建一个变量。使用#+变量名可以强制指明为当前作用域的局部变量，即不再往上查找，即使父层的作用域（比如global）中有这个变量名对应的变量。$+变量名则可以强制指明为全局变量，相当于global.变量名。
+  比如：a=1;{a=2;}之后，全局变量a的值就被改为2
+  而当全局变量a没有定义时，{a=2;}语句会在这个临时的作用域下定义变量a，而不影响全局变量。
+
+四，运算符。
+  支持以下运算符：
+  1."+":如果第一个加数是void或number，则将第二个加数转为number后执行计算。
+	如果第一个加数是string，则将第二个加数转为string进行计算。
+	如果第一个加数是array，则在array的末尾追加第二个加数。
+	如果第一个加数是dic，则第二个加数必须为void或者dic。将用后者更新前者（详情见dic的update方法）。其余类型报错。
+	其余的情况视为非法运算。
+  2."-":如果被减数为字典，减数为字符串，则从字典中去除该键。如%["name"=>"ojj"]-"name"=%[]。
+	如果被减数为字典，减数为数组，则后者每个元素都将转换为字符串、并且从前者中剔除该字符串为名的键。如%["name"=>"ojj","age"=>3]-["name","age"]=%[]
+	如果被减数为数组，则从数组中移出与减数相同的项。如["ojj","ojj2"]-"ojj"=["ojj2"]
+	其余情况，将被减数与减数都转成number再计算。
+  3."*":将两个乘数都转成number再计算乘积。
+  4."/":将两个乘数都转成number再计算商。
+  5."%":将两个乘数都转成number再计算取模。
+  6."^":将两个乘数都转成number再计算乘方。如3^3=27，注意^是右结合的，2^3^2=2^9=512
+  7."&&":两个操作数会被隐式的转成真或假，进行逻辑与运算。
+  8."||":两个操作数会被隐式的转成真或假，进行逻辑或运算。
+  9."!":两个操作数会被隐式的转成真或假，进行逻辑非运算。
+  10."后置++":操作数会被转成number，并返回这个数值，然后将这个数加一。如a=2;b=a++;则b=2，a=3
+  11."后置--":操作数会被转成number，并返回这个数值，然后将这个数减一。如a=2;b=a--;则b=2，a=1
+  12."前置++":操作数会被转成number，然后将这个数加一，最后返回这个数值。如a=2;b=++a;则b=3，a=3
+  13."前置--":操作数会被转成number，然后将这个数减一，最后返回这个数值。如a=2;b=--a;则b=1，a=1
+  14."+=":a+=b是a=a+b的缩写形式，速度会快一些。
+  15."-=":a-=b是a=a-b的缩写形式，速度会快一些。
+  16."*=":a*=b是a=a*b的缩写形式，速度会快一些。
+  17."/=":a/=b是a=a/b的缩写形式，速度会快一些。
+  18."%=":a%=b是a=a%b的缩写形式，速度会快一些。
+  19."^=":a^=b是a=a^b的缩写形式，速度会快一些。
+  20."=":赋值命令。
+  21."==":判断两个变量是否相等，会执行自动转换。如果两边有一边是字符串，那么都转为字符串比较；否则如果有一边是数字，那么转为数字比较；最后比较两个Object是否为同一Object（数组，字典，函数，类）。
+  22.">":判断大于，两边的变量都被转为数字然后比较。
+  23."<":判断小于，两边的变量都被转为数字然后比较。
+  24.">=":判断大于或等于，两边的变量都被转为数字然后比较。
+  25.">=":判断小于或等于，两边的变量都被转为数字然后比较。
+  26."[":取成员运算符，用于数组和字典的取成员（数组的索引）。对于数组，可以使用a[1:3]这样的写法，返回[a[1], a[2]]。
+  27.".":取方法运算符，.后接的名称必须是该变量拥有的方法或属性。当使用的是属性时，直接接名称，如果是方法（即是一个函数），则需要接小括号加参数，如果没有参数也要接一对空的小括号，否则会返回该函数本身。各类型内置的方法和属性详见方法和属性一章。
+  28."{":闭包运算符，{和}之间的一组语句会被当成一个闭包，有自己的私有的作用域，可以定义私有变量，并且对外相当于一条语句。
+  29."|":快捷判断运算符，a|b在a不为void的时候返回a（此时不计算b），否则返回b。可以用于设置函数传入变量的缺省值。
+  30."&":快捷判断运算符，a&b在a为void的时候返回a（此时不计算b），否则返回b。
+  31."?:":三目运算符，a ? b : c当a为true时返回b，否则返回c。
+  32."int":取整。
+  33."string":转为字符串。
+  34."number":转为数字。
+  35."typeof":返回后面变量的类型，如"number","string","array","dictionary"等等。对于void类型会返回"void"。
+
+六，关键字和语句
+  语句（即表达式）是由一些运算符和参与运算的值或变量按一定规则组成的，如a+b，a[b]=c+d，语句和语句之间需要用分号;隔开。
+  以下是一些由关键字开头的语句：
+  1.if语句，格式同C语言：if(条件表达式) + 表达式1; + [else + 表达式2]，其中else子句可以省略。
+	如：if(a==1)a=2; else a=0;
+  2.for语句，格式：for+变量名+in+[开始值,结束值[,步长]]+{+表达式+}。步长省略时，若开始值小于结束值则为1，否则为-1。
+	如：for i in [1,4]{log(i);}依次输出1至4。
+        注意大括号是必需的。
+  3.while语句，格式：while + 表达式1 + { + 表达式2 + }，当表达式1为真时，循环执行表达式2，直到表达式1为假。
+	如：while i++<5 { a+=i }
+        注意大括号是必需的。
+  4.do语句，格式：do + 表达式1 + while + 表达式2，不断执行表达式1，直至表达式2为假。表达式1至少会被执行一次。
+	如：do a+=i while i++<5
+        表达式1为多个语句的时候需要加上大括号。
+  5.foreach语句，格式：foreach + 变量名 + in + 表达式1 + { + 表达式2+}，要求表达式1的结果为数组或字典，变量名所指代的变量会依次遍历表达式1的结果，并每次都执行表达式2。当表达式1的结果为数组时，变量名指代的变量依次为数组中的每个值。当表达式1的结果为字典时，量名指代的变量依次为一个[键，值]的长度为2的数组。
+	如：foreach i in range(5){log(i)}
+        注意大括号是必需的。
+	输出：
+	0
+	1
+	2
+	3
+	4
+	（range和log是接下来要提到的内置的全局函数）
+	如：foreach i in %["name":"ojj", "age":233]:log(i)
+	输出：
+	[
+	  "name",
+	  "ojj"
+	]
+	[
+	  "age",
+	  233
+	]
+	（顺序可能不定）
+  6.continue, break, return:同C语言。
+  7.var:局部变量定义，语法：var a;或var a=2;或var a=2,b=3;
+  8.delete:删除变量或字典、数组中的元素。语法：delete a;或a=%["abc",1:"bcd":2];delete a.abc;delete a["bcd"]或a=[1,2,3];delete a[1];
+
+七，内置的常量
+  有以下四个：
+	void：即空变量。
+	true：即数字1，表示逻辑真。
+	false：即数字0，表示逻辑假。
+	global：代表全局的变量空间，是一个闭包。
+
+八，方法和属性
+  1.任意变量均具有的方法：equals。格式：a.equals(b)。判断内容是否相等（对于数组和字典，判断每个元素是否equals），对于类，如果定义了equals函数则调用，否则判断是否是同一个对象。
+  2.string型变量的属性：
+	length或size：字符串的长度，只读。
+    string型变量的方法：
+	substring或substr：取子串，格式：substring/substr(start[, len])，从字串的start位置取len长度，如果没有写len参数，则取至字符串结尾。该函数返回子串，不改变原字符串。
+	replace：替换子串，格式：replace(old, new)，将所有的old子串替换为new子串。返回替换后的子串，原字符串不变。
+	sprintf：格式化输出，"xxx".sprintf(a,b,...)相当于c语言中printf("xxx", a,b,...)。返回格式化之后的字符串。
+		目前支持%s,%d,%g,%x系列
+		如："%04d".sprintf(2)="0002"
+	split：分割字符串，格式：split(ch[, ignorenull=false])。以ch代表的字串为分隔符分割原字符串，如果ignorefalse为true，则忽略分割出的空字符串。
+		如："233233".split("3", false)=["2", void, "2", void]
+		    "233233".split("3", true)=["2", "2"]
+	indexOf：查找字符串，格式：indexOf(objstr[, startpos=0])。从startpos开始寻找objstr子串，返回所在的位置，没找到则返回-1。
+	lastIndexOf：查找字符串，格式：lastIndexof(objstr[, startpos=0])。从最右边开始寻找起始位置不小于startpos的objstr子串，返回所在的位置，没找到则返回-1。
+	beginWith：检查字符串是否以一个子串开头。格式beginWith(str)。返回true或false。
+	endWith：检查字符串是否以一个子串结尾。格式beginWith(str)。返回true或false。
+	clear：清空字符串。格式clear()。
+	toLowerCase 字符串拷贝一份并转换到小写，不修改本体，返回拷贝值
+	toUpperCase 字符串拷贝一份并转换到大写，不修改本体，返回拷贝值
+  3.array型变量的属性：
+	length或size：数组的长度，可读可写。
+    array型变量的方法：
+	add：增加一个元素，格式：add(var1,var2,...)。将var1, var2, ...增加到数组的末尾。
+	remove：去除元素，格式：remove(a,b,...)。在数组中移除与a或b或...相等的元素。
+	erase：去除指定位置的元素，格式：erase(i)，去除第i位置的元素，负数代表从后往前数，比如-1代表最后一个元素。
+	insert：在指定位置插入元素，格式：insert(i, var)，将var插入到数组的第i个位置。
+	clone：拷贝整个数组，格式：clone()，返回与原数组一摸一样的数组，但是相互之间不再有关系。
+		如：a=[1,2,3];b=a;b[0]=3;此时a[0]也等于3，而a=[1,2,3];b=a.clone();b[0]=3;此时a[0]仍为1。
+		注：使用a[:]也可以得到整个数组的拷贝，与clone的区别是clone对每个元素也实行拷贝，因此对于[[1,2],[3,4]]这样的嵌套数组两者的结果就有差异。
+	find：搜索元素，格式：find(var)，返回var所在数组的下标，比较使用普通的==进行比较。
+	join：合并元素，格式：join(str)，以str为分割字串，将数组中所有元素转成字符串并连接。如["zc","xc","ojj"].join("x")返回"zcxxcxojj"。
+	concat：合并数组，格式：concat(...)，参数要求全是数组。将数组合并，并返回新数组。如[1,2,3].concat([4],[5,6])=[1,2,3,4,5,6]。
+	sort：排序数组的元素，默认的方式是快排，格式：sort(param)。
+                当param为一个字符串时，表示排序的模式，有以下的可选：
+			"-"：按默认的比大小运算从大到小排列。
+			"0"：全部转化为数字并从小到大排列。
+			"9"：全部转化为数字并从大到小排列。
+			"a"：全部转化为字符串并从小到大排列。
+			"z"：全部转化为字符串并从大到小排列。
+			"+"及其余的值：按默认的比大小运算从小到大排列。
+		当param为一个函数时，表示用户已自定义过一个比大小的函数param(a,b)，当用户认为a应该比b小时返回true，否则返回false。
+	equals：判断两个数组是否元素相等，格式：equals(arr)。对每个元素使用==运算符来判断。
+	save：将数组的每个元素转成字符串存入文件，每个元素占一行，格式：save(file)。
+	load：从文件读入，每行成为数组的一个元素，都是字符串，格式：load(file)。
+	clear：清空数组。格式clear()。
+  4.dictionary型变量的属性：
+	length或size：只读属性，表示字典中键-值对的个数。会忽略掉值为void的键-值对。
+    dictionary型变量的方法：
+	remove：去除元素，格式：remove(a,b,...)。在字典中移除值与a或b或...相等的元素。
+	erase：去除指定位置的元素，格式：erase(str)，去除键为str的元素。
+	clone：拷贝整个字典，格式：clone()，返回与原字典一摸一样的字典，但是相互之间不再有关系。参考数组的clone()。
+	find：查找元素，格式：find(key)，key存在返回true，否则返回false。
+	toArray：将字典转为数组。格式：toArray()，返回[键1,值1,键2,值2,...]这样的数组（但顺序可能不定），不改变原字典。
+	sortKeyByValue：返回一个由所有的key组成的数组，key的顺序按对应的value从小到大排列，格式：sortKeyByValue()。如a=%[a:2, c:4, b:1]，那么a.sortKeyByValue()返回["b", "a", "c"]。
+	getKeyArray：返回所有key组成的数组，格式：getKeyArray()。
+	getValueArray：返回所有key组成的数组，格式：getValueArray()。
+	saveStruct：将字典按照parser的格式存进文件，格式：saveStruct(file)。
+		比如：a=%[key:1]，那么会将字符串%["ojj"=>1]存进文件。
+		可以直接用evalFile(file)对存下来的文件进行读取返回原字典。
+	clear：清空字典。格式clear()。
+
+九，内置的全局函数
+  1.array，格式：array(var1, var2, ...)，返回由这些var转成的数组。
+  2.dictionary，格式：dictionary(key1, var1, key2, var2, ...)，返回由这些键-值对组成的字典。
+  3.log，格式：log(var1, var2, ...)，在控制台窗口输出这些变量，逗号分隔（如果有控制台窗口的话）。
+  4.print，格式：print(str1, str2, ...)，在控制台窗口输出这些字符串（不包含引号，这是与log不同的地方），逗号分隔（如果有控制台窗口的话）。
+  5.eval，格式：eval(str)，将str作为脚本执行，返回执行的结果。
+  6.range，格式：range(a)或range(a,b)，前者返回[0,1,2,...,a-1]的数组，后者返回[a,a+1,...,b-1]的数组。
+  7.random，格式：random(a)或random(a,b)，前者返回0至a-1间的随机整数，后者返回a至b-1间的随机整数。
+  8.typeof，格式：typeof(var)，相当于var.type。
+  9.itoa，格式：itoa(var)，将var转成整数后再转成字符串并返回，不改变原var的值。
+	如：itoa(233)="233"
+	    itoa(233.4)="233"
+  10.itoa2，格式：itoa2(var)，和itoa相同，只是返回的是全角的字符串。
+	如：itoa2(233)="２３３"
+  11.time，格式：time(str)，将str作为脚本执行，返回执行所需的毫秒数。
+  12.hash，格式：hash(var)，返回var变量的hash值（long型）。
+  13.hash16，格式：hash16(var)，返回var变量的hash值（short型）。
+  14.char，格式：char(str)，返回字符串str第一个字符的Unicode值。（UCS-4）
+  15.saveFile，格式saveFile(file, str[, pos=0])，将str存进文件file中，从pos的位置开始存储。pos=0时，创建新文件；pos=-1时，从文件末尾开始追加。
+  16.loadFile，格式loadFile(file)，加载文件file的内容，返回字符串。
+  17.appendFile，格式appendFile(file, str)，在文件尾追加内容，相当于saveFile(file, str, -1)。
+  18.evalFile，格式evalFile(file)，运行文件file的内容，相当于eval(loadFile(file))。
+  19.toString，格式toString(var)，返回变量var的序列化形式，即log打印出来的内容。即log(var)相当于print(toString(var))。
+  20.clock，格式clock()，返回当前的毫秒数，精度应该是到微秒……。
+
+十，目前内置的类
+  注1：不能创建实例的类下的所有属性和函数皆为静态。不需要创建实例便可调用。【
+	  例如：Math.pi Math.abs(-3)
+  注2：可创建实例的类下的静态函数或属性会特别说明。未经说明均为动态，即需要先创建实例后才能调用【
+	
+  1.Date类。
+	使用Date()返回一个实例，表示调用这个函数时的当前时间。
+	成员函数有：
+	getYear()：返回当前的年份。
+	getMonth()：返回当前的月份（1-12）。
+	getDay()：返回当前的日期（1-31）。
+	getWDay()：返回当天是星期几（1-7）。
+	getHour()：返回现在的小时（0-23）。
+	getMinute()：返回现在的分钟（0-59）。
+	getSecond()：返回现在的秒数（0-59）
+  2.Math类，不允许创建实例。
+	只读属性有：
+	PI:3.14159265358979323846
+	E:2.71828182845904523536
+	静态成员函数有：
+	sgn(var)：符号函数，大于0返回1，等于0（误差10^-8）返回0，小于0返回-1。
+	abs(var)：返回绝对值。
+	sqrt(var)：返回平方根。
+	lg(var)：返回以10为底的对数。
+	ln(var)：返回自然对数。
+	log(base, var)以base为底的对数值。
+	floor(var)：返回小于或等于var的最大整数。
+	ceil(var)：返回大于或等于var的最小整数。
+	round(var)：返回四舍五入后的整数。
+	sin(var)：返回正弦值，参数单位为弧度。
+	cos(var)：返回余弦值，参数单位为弧度。
+	tan(var)：返回正切值，参数单位为弧度。
+	asin(var)：返回反正弦值，弧度。
+	acos(var)：返回反余弦值，弧度。
+	atan(var)：返回反正切值，弧度。
+	功能顾名思义。
+  3.Regex类，正则表达式，ECMA语法。
+	使用Regex(regstr[, ignorecase=false])创建。
+	成员函数有：
+	search(str)：返回所有匹配到的数组。如Regex("\d").search("a1b2c3")=[1,2,3]
+	matchAll(str)：判断是否这个正则表达式可以全部匹配这个字符串，可以返回true，否则返回false。
+	getSubMatch(str)：返回子匹配（即正则表达式里用括号()括住的字串的匹配）数组。
+		如：Regex("(.)bc(.)").getSubMatch("abcd")=["abcd", "a", "d"]
+	replaceFirst(str, dst)：将src里第一个匹配替换成dst，dst里可以使用\1,\2等表示子匹配，\0表示整个的匹配串。
+		如：Regex("(.)bc(.)").replaceFirst("abcd","\0\1\2")="abcdad"
+	replaceAll(str, dst)：同replaceFirst，只是对所有匹配串都进行替换。
+
+
+以下是BKEngine特有的函数：
+	fileExist(file)：返回file是否存在。
+
+以下是BKEngine特有的类：
+  1.Scripts类，不能创建实例，
+	只读属性有：
+	curLabel：返回当前标签（若在macro中访问，则此值为进入macro前最后一个标签）
+	curScript：返回当前脚本名（若在macro中访问，则此值为进入macro前最后一个脚本名）
+	actualCurLabel：返回当前真实标签
+	actualCurScript：返回当前真实脚本名
+	成员函数有：
+	showText(str)：打印一段文字
+	runCmd(str,dic)：执行一个指令，其中str是命令名，dic是由参数名和参数组成的字典。
+		如：Scripts.RunCmd("sprite",%[index:0,file:"1.png"]);
+		注：执行某个参数要求“变量”的命令时，比如info、idlesp等命令，传入字典中的对应变量将被修改。
+	 	      正常脚本中是这么调用的：
+		     	@idlesp get=aaa
+		    	#log(aaa) //正确结果
+		      parser中的正确调用方式是：
+		      	#dic = %[get:void];
+		     	#Scripts.RunCmd("idlesp",dic);
+		      	#log(dic.get); //正确结果
+	goto(label, script)：jump到script所指文件的label标签，script为空则为当前文件
+	call(label, script)：call到script所指文件的label标签，script为空则为当前文件
+	return()：返回
+	returnTo(label, script)：返回后jump到script所指文件的label标签，script为空则为当前文件
+	getCurrentRead()：获得当前脚本执行处是否已经被执行过。可以用来判断下一段对话是否是第一次显示。
+	isLabelReaded(label, script)：获得script所指文件的label标签是否曾经执行过，script为空则为当前文件
+	
+  2.System类，不能创建实例
+	只读属性有：
+	appName：主程序的文件名（不含路径）
+	appPath：主程序的路径
+	appFullName：主程序的全文件名
+	showingText：当前是否正在显示文字
+	transCount：当前正在渐变的数量
+	actionCount：当前的动作的数量
+	mouseWheel：鼠标滚轮的移动量。正负表示方向。主要用于触发mousewheel事件后判断鼠标滚轮的方向
+	mouseStatus：当前鼠标状态。长度为3的数组，分别为鼠标当前位置的横坐标、纵坐标以及鼠标左中右按键的状态
+	keyboardStatus：当前键盘状态。windows上有效，长为256的数组，每个元素的值代表当前下标对应的按键的状态
+	version：引擎版本，日期的数值，如20140508。
+	platform：当前平台，为"android"、"ios"、"macos"、"linux"、"winphone"、或"windows"等
+	resolutionSize：游戏分辨率，是一个长度为2的数组
+	gameName：游戏名
+	
+	可读可写的属性有：
+	gameTitle：游戏标题【存】
+	saveHistory：存档里要不要保存历史文字记录【存】
+	autoMode：是否为自动模式。设为true将立刻进入自动模式
+	autoModeTime：自动模式等待的时间。【存】
+	skipMode：是否快进。设为true将立刻进入快进模式
+	skipAll：是否跳过全部。设为true将跳过全部，false则只跳过已读【存】
+	maxFrameSpeed：最大帧速。【存】
+	fullScreen：是否全屏，修改立即生效。【存】
+	FPSEnabled：是否在左下角显示FPS等信息。【存】
+	fontSizeFactor：全局的字体大小调整百分比。【存】
+	touchPointEnabled：触摸和鼠标按下时是否显示小圆圈。【存】
+	windowSize：窗体大小。是个长度为2的数组。【存】
+	mouseCursor：鼠标光标文件（若是空字符串，表示关闭）。【存】
+	mouseCursorAutoHideTime：鼠标不动时光标自动消失的时间（若是0，表示关闭）。【存】
+	textSpeed：文字显示速度，0-100，实际每个字的显示速度为(1-TextSpeed/100)*0.1s。【存】
+	transitionEnabled：是否允许转场动画。若为false，则trans指令将立即完成。【存】
+
+	方法有：
+	exit(bool force=false)：退出游戏。若force为true则直接退出游戏，否则将执行exit事件。
+	
+  3.SaveData类，不能创建实例
+	方法有：
+	exist(n)：编号为n的存档是否存在
+	getTime(n)：获取编号为n的存档的存档时间，是一个Date类，存档不存在则返回void
+	getText(n)：获取存档时存入的额外字符串，若未保存额外字符串或存档不存在则返回空。
+	getCurrentSave():返回当前的存档数据
+	
+  4.Channel类，可创建实例
+	Channel(channel)：channel为通道数或"bgm"， "voice"字符串
+	静态可读可写的属性（静态指不需要创建实例，如Channel.musicVolume）：
+	musicVolume：背景音乐音量【存】
+	voiceVolume：语音通道音量【存】
+	soundVolume：其余通道音量【存】
+
+	只读属性有：
+	isPlaying:是否正在播放
+	isPaused:是否正在暂停
+	fileName:正在播放的文件名
+	
+	可读可写的属性有：
+	loopTimes:循环次数
+	loopTo:循环时跳转到的位置
+	volume:音量
+	
+	函数有：
+	load(file):加载路径为file的文件
+	play(file, vol=100, looptimes=0):播放
+	pause():暂停播放
+	resume():恢复播放
+	stop(fadetime):经过fadetime（毫秒）的淡出之后，停止播放
+	seek(time):跳转到音频第time毫秒
+	tell():获得当前播放的时间进度（单位毫秒）
+
+  4.History类，不能创建实例
+	只读属性有：
+	data:获取历史记录的变量
+	startIndex:第一个页面的编号
+	curIndex:当前页面编号
+	nextIndex:下一页面编号，如果当前在最后一页则返回最后一页的编号
+	count:当前历史数量
+	
+	可读可写的属性有：
+	enabled:是否可以显示历史记录
+	maxPage:最大历史记录页数
+	recordMode:显示历史记录的模式 ("pageMode","lineMode", "pageTagMode")
+	maxChars:最多可以记录多少字符
+	
+	函数有：
+	getDataAtLine(line):返回第line行的历史记录
+	reline():换行
+	repage():换页
+	add(text,reline):往历史记录里添加字符串text。reline决定之后是否要换行，默认为false
+	
+  5.Sprite类，可创建实例
+	Sprite(index)：index为精灵的编号，之后这个类便一直引用编号为index的精灵。
+	只读属性有：
+	type:精灵的类型
+	index:精灵的编号
+	imageWidth:图片的宽度
+	imageHeight:图片的高度
+	
+	可读可写的属性有：
+	value:精灵的值
+	x:精灵的x坐标
+	y:精灵的y坐标
+	width:精灵的宽度
+	height:精灵的高度
+	opacity:精灵的透明度
+	zorder：精灵的深度
+	
+	函数有：
+	getParent()：返回该精灵的父精灵
+
+	静态函数有：
+	idlesp()：返回一个空的精灵编号
+	
+  6.Timer类，可创建实例
+	Timer(func, interval=0, *args)：func为要执行的函数，interval为间隔（毫秒），小于或等于0时该Timer自动被屏蔽，args为参数，调用时现将dt（从上次调用到这次调用的间隔）传给func，接着将args一项项传给func。
+	如Timer(function(dt,a,b){log(dt, a+b);}, 50, 1, 2);
+	静态方法有：
+	setTimeout(func, delay, *args)：延迟delay毫秒后执行func，传入的第一个参数是实际的延迟时间，之后将args依次传入。执行一次后自动删除。
+	clearTimeout(func)：删除用setTimeout注册的函数。
+	可读可写的属性有：
+	enable：timer是否在计数
+	interval：timer计数的间隔
+
+  7.DownloadManager类
+	必须创建实例才能使用
+	可读可写的属性有：
+	packageURL: 将要下载文件的URL（字符串）
+	outFileName: 输出文件的文件名
+	
+	只写不可读的属性有：
+	onSuccess: 下载成功时所调用的回调函数
+	onError: 下载出错时所调用的回调函数
+	onProcess: 下载正在进行时所调用的回调函数
+	
+	函数有：
+	begin(): 开始下载
+	stop(): 停止下载
+	
+	※此类支持断网重连和断点续传
+	
+  8.Json类
+	不可创建实例
+	toJson(var):将一个parser变量转换成Json格式化字符串。返回字符串
+	fromJson(string)：将一个Json格式化字符串转换成parser变量。返回变量
+  
+  9.Network类
+	不可创建实例
+	函数有：
+	download(URL,outFileName): 创建并返回一个packageURL=URL，outFileName=outFileName的DownloadManger实例
+	getString(URL):从URL处获取该文件的字符串，如果网络连接失败则会返回空字符串。在返回字符串之前该线程的脚本会阻塞在此命令
+	
+	
+	
+	
+
+十一，注意防坑！
+  1.函数的默认值不要使用非数值或字符串，否则调用时对参数做的修改会永久保留：
+	示例：	function f(a=[])
+		{
+		    a.add(0);
+		}
+		log(f());
+		log(f());
+	会输出：
+		[0]
+		[0, 0]
+
+  2.在类的函数里构造这个类本身时（若这个类定义了显式的构造函数），或是构造另一个类但其类名和本类某函数同名时，需要使用global.类名(arg...)来创建。
+	示例：	class S
+		{
+			function S(){}
+			function test(){return S();}
+			function test2(){return global.S();}
+		}
+	S.test()会返回void，S.test2()才会返回一个S类的实例。
